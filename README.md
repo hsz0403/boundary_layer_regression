@@ -11,12 +11,15 @@ add by 黄索之:
 2.扩展数据集（添加噪声）
 
 `data_utils.py` ：生成数据集
+##### 参数 TRAIN_PATH , TEST_PATH, TRAIN_LABEL_PATH ,TEST_LABEL_PATH , Y_LENGTH , X_LENGTH, BATCH_SIZE
+
 
 `inference.py` ：生成结果
-
+##### 参数 NUM
 `train.py` : 选取模型训练，保存模型
 
-`models.py` ：存各种实验的模型
+`models.py` ：存各种实验的模型 
+##### 参数 Y_LENGTH , X_LENGTH , LR
 
-##### 在这里写上各种model的实验注意事项和结果
+#### 在这里写上各种model的实验注意事项和结果
 
