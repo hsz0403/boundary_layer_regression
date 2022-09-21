@@ -22,4 +22,6 @@ add by 黄索之:
 ##### 参数 Y_LENGTH , X_LENGTH , LR
 
 #### 在这里写上各种model的实验注意事项和结果
+batch size 太小？ 
+num_class改成2？
 

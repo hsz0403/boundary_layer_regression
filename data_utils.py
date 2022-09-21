@@ -14,7 +14,7 @@ TRAIN_LABEL_PATH = "data_PBL/train_labels"
 TEST_LABEL_PATH = "data_PBL/test_labels"
 Y_LENGTH = 451
 X_LENGTH = 1023
-BATCH_SIZE=2
+BATCH_SIZE=4
 
 
 class BoundaryDataset(torch.utils.data.Dataset):
@@ -35,10 +35,19 @@ class BoundaryDataset(torch.utils.data.Dataset):
             
             
             label_img_path = os.path.join(label_path, label_path.split('/')[1].split('_')[0].strip()+"_label_"+str(i).zfill(3)+".png")
-            label_img=cv2.imread(label_img_path)
-            label_img=cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            label_img=cv2.imread(label_img_path,cv2.IMREAD_GRAYSCALE)
+            #
+            new_label=np.zeros([451,1023])
+            for i in range(450):
+                for j in range(1022):
+                    if label_img[i][j]==0:
+                        new_label[i][j]=0
+                    else:
+                        new_label[i][j]=1
+
+
             #print(img_path,label_img_path)
-            self.label.append(label_img)
+            self.label.append(new_label)
             
 
     def __len__(self):
@@ -52,7 +61,7 @@ class BoundaryDataset(torch.utils.data.Dataset):
         
         return {
             "x": torch.tensor(img, dtype=torch.float),
-            "y": torch.tensor(label, dtype=torch.float),#can only be float now
+            "y": torch.tensor(label, dtype=torch.long),#can only be float now
         }
         
 class LightDataset(pl.LightningDataModule):

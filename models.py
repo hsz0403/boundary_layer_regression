@@ -357,7 +357,7 @@ class Decoder(nn.Module):
 
 
 class UNet(pl.LightningModule):
-    def __init__(self, enc_chs=(3,64,128,256,512,1024), dec_chs=(1024, 512, 256, 128, 64), num_class=1, retain_dim=True, out_sz=(X_LENGTH,Y_LENGTH)):
+    def __init__(self, enc_chs=(3,64,128,256,512,1024), dec_chs=(1024,512,256, 128, 64), num_class=2, retain_dim=True, out_sz=(Y_LENGTH,X_LENGTH)):
         super().__init__()
         self.encoder     = Encoder(enc_chs)
         self.decoder     = Decoder(dec_chs)
@@ -366,7 +366,8 @@ class UNet(pl.LightningModule):
         self.out_sz=out_sz
 
     def forward(self, x):
-        x=x.transpose(1,3)#by hsz [B,3,X,Y]
+        #print(x)
+        x=x.transpose(1,3).transpose(2,3)#by hsz [B,3,Y,X]
         
         enc_ftrs = self.encoder(x)
         out      = self.decoder(enc_ftrs[::-1][0], enc_ftrs[::-1][1:])
@@ -374,11 +375,12 @@ class UNet(pl.LightningModule):
         
         if self.retain_dim:
             out = F.interpolate(out, self.out_sz)
-        return out.squeeze(1).transpose(1,2) # add change by hsz
+        out = F.sigmoid(out) # add change by hsz
+        return out 
 
     def loss_fn(self, out, target):
-        
-        return nn.CrossEntropyLoss()(out, target)#by hsz: fit shape to [B,3,X,Y]
+        #print(out,target,out.shape,target.shape)
+        return nn.CrossEntropyLoss()(out, target)#by hsz: fit shape to [B,3,Y,X]
 
     def configure_optimizers(self):
         
