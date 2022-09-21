@@ -375,12 +375,12 @@ class UNet(pl.LightningModule):
         
         if self.retain_dim:
             out = F.interpolate(out, self.out_sz)
-        out = F.sigmoid(out) # add change by hsz
+        out =F.softmax(out, dim=1) # add change by hsz[B,num_class,y,x]
         return out 
 
     def loss_fn(self, out, target):
         #print(out,target,out.shape,target.shape)
-        return nn.CrossEntropyLoss()(out, target)#by hsz: fit shape to [B,3,Y,X]
+        return nn.CrossEntropyLoss()(out, target)
 
     def configure_optimizers(self):
         
