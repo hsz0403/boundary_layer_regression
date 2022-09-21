@@ -16,7 +16,7 @@ NUM=26
 if __name__ == '__main__':
     path=os.path.join('data_PBL/train_images',"train_"+str(NUM).zfill(3)+".jpg")
     
-    model_path="path/models-epoch=75-valid_loss=0.00.ckpt"
+    model_path="path/models-epoch=125-valid_loss=0.00.ckpt"
     model = UNet.load_from_checkpoint(model_path)
     # disable randomness, dropout, etc...
     model.eval()
