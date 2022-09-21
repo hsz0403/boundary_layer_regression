@@ -24,4 +24,5 @@ add by 黄索之:
 #### 在这里写上各种model的实验注意事项和结果
 batch size 太小？ 
 num_class改成2？
-
+各种模型后面都要加上softmax或者sigmoid！ 因为这是二分类
+试试正版unet？
