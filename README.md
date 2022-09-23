@@ -26,3 +26,5 @@ batch size 太小？
 num_class改成2？
 各种模型后面都要加上softmax或者sigmoid！ 因为这是二分类
 试试正版unet？
+loss function: cross 可以优化为focal 
+https://github.com/SpaceNetChallenge/SpaceNet_Off_Nadir_Solutions/blob/master/selim_sef/training/losses.py
