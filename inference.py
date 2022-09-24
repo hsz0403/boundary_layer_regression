@@ -11,12 +11,17 @@ from data_utils import (BoundaryDataset, LightDataset)
 
 from models import ECAPA_TDNN,TDNN,UNet
 
-NUM=26
+#test number
+NUM=78
+
+path=os.path.join('data_PBL/test_images',"test_"+str(NUM).zfill(3)+".jpg")
+    
+model_path="path/models-epoch=937-valid_loss=0.00.ckpt"
+
+
 
 if __name__ == '__main__':
-    path=os.path.join('data_PBL/train_images',"train_"+str(NUM).zfill(3)+".jpg")
     
-    model_path="path/models-epoch=125-valid_loss=0.00.ckpt"
     model = UNet.load_from_checkpoint(model_path)
     # disable randomness, dropout, etc...
     model.eval()
@@ -25,7 +30,7 @@ if __name__ == '__main__':
     #gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     #test_input=torch.tensor(gray_img, dtype=torch.float).unsqueeze(0)#[Y,X] to [B,Y,X]
     # predict with the model
-    y_path="data_PBL/train_labels/train_label_"+str(NUM).zfill(3)+".png"
+    y_path="data_PBL/test_labels/test_label_"+str(NUM).zfill(3)+".png"
     y=cv2.imread(y_path)
     #print(y)
     y_hat = model(torch.tensor(img, dtype=torch.float).unsqueeze(0))#[Y,X,3] to [B(1),Y,X,3]
@@ -39,17 +44,12 @@ if __name__ == '__main__':
             else:
                 y_hat[i][j]=0
     print(y_hat)
-    cv2.imwrite("examples/test.png", y_hat)
+    cv2.imwrite("examples/test_"+str(NUM)+".png", y_hat)
 
-    y_path="data_PBL/train_labels/train_label_023.png"
+    
     y=cv2.imread(y_path,cv2.IMREAD_GRAYSCALE)#(Y,X) 0 or 255
-    print(y,y.shape)
-    for i in range(450):
-        for j in range(1022):
-            if y[i][j]==0 or y[i][j]==255:
-                pass
-            else: 
-                print('!')
+    
+    
     #label as number
     '''
     read_M3 = np.load('data_PBL/labels1/train_labels.npz')

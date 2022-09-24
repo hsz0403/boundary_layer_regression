@@ -16,15 +16,15 @@ from models import ECAPA_TDNN,TDNN,UNet
 
 
 if __name__ == '__main__':
-                
+    mod = UNet()# change model here       
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         monitor='val_loss',
-        dirpath='./path',
+        dirpath='./path/UNet',
         filename='models-{epoch:02d}-{valid_loss:.2f}',
         save_top_k=3,
         mode='min')
 
-    mod = UNet()# change model here
+    
     ds = LightDataset()
     trainer = pl.Trainer(accelerator='gpu', devices=-1, max_epochs=1000, callbacks=[checkpoint_callback])
     trainer.fit(model=mod, datamodule=ds)

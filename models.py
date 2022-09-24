@@ -5,8 +5,8 @@ import torch.nn.functional as F
 import torchvision
 import pytorch_lightning as pl
 
+from loss import dice_loss
 
-from sklearn.model_selection import train_test_split
 
 
 
@@ -510,12 +510,17 @@ class UNet(pl.LightningModule):
         x = self.up3(x, x2)
         x = self.up4(x, x1)
         out = self.outc(x)
-        out =F.softmax(out, dim=1) #hsz
+        #out=F.sigmoid(x.squeeze(1)) # hsz  if out is [B,1,Y,X]
+        #out =F.softmax(out, dim=1) #hsz if out is [B,2,Y,X]
         return out
 
     def loss_fn(self, out, target):
         #print(out,target,out.shape,target.shape)
-        return nn.CrossEntropyLoss()(out, target)
+        #Pytorch中, CrossEntropyLoss是包含了softmax的内容的，我们损失函数使用了CrossEntropyLoss, 那么网络的最后一层就不用softmax
+        loss=nn.CrossEntropyLoss()(out, target)  + dice_loss(F.softmax(out, dim=1).float(),
+                                       F.one_hot(target, 2).permute(0, 3, 1, 2).float(),
+                                       multiclass=True)
+        return loss
 
     def configure_optimizers(self):
         
