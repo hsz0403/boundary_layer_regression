@@ -20,7 +20,7 @@ if __name__ == '__main__':
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         monitor='val_loss',
         dirpath='./path/UNet',
-        filename='models-{epoch:02d}-{valid_loss:.2f}',
+        filename='models-{epoch:02d}-{valid_loss:.3f}',
         save_top_k=3,
         mode='min')
 

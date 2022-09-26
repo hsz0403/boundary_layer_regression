@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torchvision
 import pytorch_lightning as pl
 
-from loss import dice_loss
+from loss import FocalLoss, dice_loss
 
 
 
@@ -480,7 +480,7 @@ class OutConv(nn.Module):
         return self.conv(x)
     
 class UNet(pl.LightningModule):
-    def __init__(self, n_channels=3, n_classes=2, bilinear=False):
+    def __init__(self, n_channels=3, n_classes=2, bilinear=True):
         super(UNet, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
@@ -517,9 +517,9 @@ class UNet(pl.LightningModule):
     def loss_fn(self, out, target):
         #print(out,target,out.shape,target.shape)
         #Pytorch中, CrossEntropyLoss是包含了softmax的内容的，我们损失函数使用了CrossEntropyLoss, 那么网络的最后一层就不用softmax
-        loss=nn.CrossEntropyLoss()(out, target)  + dice_loss(F.softmax(out, dim=1).float(),
+        loss=3*nn.CrossEntropyLoss()(out, target)  + dice_loss(F.softmax(out, dim=1).float(),
                                        F.one_hot(target, 2).permute(0, 3, 1, 2).float(),
-                                       multiclass=True)
+                                       multiclass=True)+2*FocalLoss()(out, target)
         return loss
 
     def configure_optimizers(self):
@@ -542,3 +542,20 @@ class UNet(pl.LightningModule):
         loss = self.loss_fn(out, y)
         self.log('val_loss', loss)
         return loss
+
+    
+    #model 5 idea by prof.Zhao DP+cnn(?)
+    
+
+'''class Down(nn.Module):
+    """Downscaling with maxpool then double conv"""
+
+    def __init__(self, ):
+        super().__init__()
+        self.maxpool_conv = nn.Sequential(
+            nn.MaxPool2d(2),
+            DoubleConv(in_channels, out_channels)
+        )
+
+    def forward(self, x):
+        return self.maxpool_conv(x)'''
