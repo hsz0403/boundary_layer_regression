@@ -17,297 +17,7 @@ LR=1e-5
 ''' Res2Conv1d + BatchNorm1d + ReLU
 '''
 
-#model 1 ECAPA_TDNN
-class Res2Conv1dReluBn(nn.Module):
-    '''
-    in_channels == out_channels == channels
-    '''
-
-    def __init__(self, channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=False, scale=4):
-        super().__init__()
-        assert channels % scale == 0, "{} % {} != 0".format(channels, scale)
-        self.scale = scale
-        self.width = channels // scale
-        self.nums = scale if scale == 1 else scale - 1
-
-        self.convs = []
-        self.bns = []
-        for i in range(self.nums):
-            self.convs.append(nn.Conv1d(self.width, self.width,
-                              kernel_size, stride, padding, dilation, bias=bias))
-            self.bns.append(nn.BatchNorm1d(self.width))
-        self.convs = nn.ModuleList(self.convs)
-        self.bns = nn.ModuleList(self.bns)
-
-    def forward(self, x):
-        out = []
-        spx = torch.split(x, self.width, 1)
-        for i in range(self.nums):
-            if i == 0:
-                sp = spx[i]
-            else:
-                sp = sp + spx[i]
-            # Order: conv -> relu -> bn
-            sp = self.convs[i](sp)
-            sp = self.bns[i](F.relu(sp))
-            out.append(sp)
-        if self.scale != 1:
-            out.append(spx[self.nums])
-        out = torch.cat(out, dim=1)
-        return out
-
-
-''' Conv1d + BatchNorm1d + ReLU
-'''
-
-
-class Conv1dReluBn(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=False):
-        super().__init__()
-        self.conv = nn.Conv1d(in_channels, out_channels,
-                              kernel_size, stride, padding, dilation, bias=bias)
-        self.bn = nn.BatchNorm1d(out_channels)
-
-    def forward(self, x):
-        return self.bn(F.relu(self.conv(x)))
-
-
-''' The SE connection of 1D case.
-'''
-
-
-class SE_Connect(nn.Module):
-    def __init__(self, channels, s=2):
-        super().__init__()
-        assert channels % s == 0, "{} % {} != 0".format(channels, s)
-        self.linear1 = nn.Linear(channels, channels // s)
-        self.linear2 = nn.Linear(channels // s, channels)
-
-    def forward(self, x):
-        out = x.mean(dim=2)
-        out = F.relu(self.linear1(out))
-        out = torch.sigmoid(self.linear2(out))
-        out = x * out.unsqueeze(2)
-        return out
-
-
-''' SE-Res2Block.
-    Note: residual connection is implemented in the ECAPA_TDNN model, not here.
-'''
-
-
-def SE_Res2Block(channels, kernel_size, stride, padding, dilation, scale):
-    return nn.Sequential(
-        Conv1dReluBn(channels, channels, kernel_size=1, stride=1, padding=0),
-        Res2Conv1dReluBn(channels, kernel_size, stride,
-                         padding, dilation, scale=scale),
-        Conv1dReluBn(channels, channels, kernel_size=1, stride=1, padding=0),
-        SE_Connect(channels)
-    )
-
-
-''' Attentive weighted mean and standard deviation pooling.
-'''
-
-
-class AttentiveStatsPool(nn.Module):
-    def __init__(self, in_dim, bottleneck_dim):
-        super().__init__()
-        # Use Conv1d with stride == 1 rather than Linear, then we don't need to transpose inputs.
-        # equals W and b in the paper
-        self.linear1 = nn.Conv1d(in_dim, bottleneck_dim, kernel_size=1)
-        # equals V and k in the paper
-        self.linear2 = nn.Conv1d(bottleneck_dim, in_dim, kernel_size=1)
-
-    def forward(self, x):
-        # DON'T use ReLU here! In experiments, I find ReLU hard to converge.
-        alpha = torch.tanh(self.linear1(x))
-        alpha = torch.softmax(self.linear2(alpha), dim=2)
-        mean = torch.sum(alpha * x, dim=2)
-        residuals = torch.sum(alpha * x ** 2, dim=2) - mean ** 2
-        std = torch.sqrt(residuals.clamp(min=1e-9))
-        return torch.cat([mean, std], dim=1)
-
-
-''' Implementation of
-    "ECAPA-TDNN: Emphasized Channel Attention, Propagation and Aggregation in TDNN Based Speaker Verification".
-    Note that we DON'T concatenate the last frame-wise layer with non-weighted mean and standard deviation, 
-    because it brings little improvment but significantly increases model parameters. 
-    As a result, this implementation basically equals the A.2 of Table 2 in the paper.
-'''
-
-
-class ECAPA_TDNN(pl.LightningModule):
-    def __init__(self, in_channels=Y_LENGTH, channels=256, embd_dim=X_LENGTH):
-        super().__init__()
-        self.layer1 = Conv1dReluBn(
-            in_channels, channels, kernel_size=5, padding=2)
-        self.layer2 = SE_Res2Block(
-            channels, kernel_size=3, stride=1, padding=2, dilation=2, scale=8)
-        self.layer3 = SE_Res2Block(
-            channels, kernel_size=3, stride=1, padding=3, dilation=3, scale=8)
-        self.layer4 = SE_Res2Block(
-            channels, kernel_size=3, stride=1, padding=4, dilation=4, scale=8)
-
-        cat_channels = channels * 3
-        self.conv = nn.Conv1d(cat_channels, 1536, kernel_size=1)
-        self.pooling = AttentiveStatsPool(1536, 128)
-        self.bn1 = nn.BatchNorm1d(3072)
-        self.linear = nn.Linear(3072, embd_dim)
-        self.bn2 = nn.BatchNorm1d(embd_dim)
-        self.save_hyperparameters()
-
-    def forward(self, x):
-        
-        x= x.transpose(1,2) #[b,X,Y]d by hsz 
-
-        # source code
-        x = x.transpose(1, 2)
-        out1 = self.layer1(x)
-        out2 = self.layer2(out1) + out1
-        out3 = self.layer3(out1 + out2) + out1 + out2
-        out4 = self.layer4(out1 + out2 + out3) + out1 + out2 + out3
-
-        out = torch.cat([out2, out3, out4], dim=1)
-        out = F.relu(self.conv(out))
-        out = self.bn1(self.pooling(out))
-        out = self.bn2(self.linear(out))
-        return out
-
-    def loss_fn(self, out, target):
-        return nn.L1Loss()(out, target)
-
-    def configure_optimizers(self):
-        
-        optimizer = torch.optim.AdamW(self.parameters(), lr=LR)
-        return optimizer
-
-    def training_step(self, batch, batch_idx):
-        x, y = batch["x"],batch["y"]
-
-        out = self(x)
-        loss = self.loss_fn(out, y)
-        self.log('train_loss', loss)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        x, y =batch["x"],batch["y"]
-
-        out = self(x)
-        loss = self.loss_fn(out, y)
-        self.log('val_loss', loss)
-        return loss
-
-#model 2 TDNN
-class TDNN(pl.LightningModule):
-
-    def __init__(
-        self,
-        input_dim=Y_LENGTH,
-        output_dim=1,
-        context_size=7,
-        stride=1,
-        dilation=1,
-        batch_norm=True,
-        dropout_p=0.0
-    ):
-        '''
-        TDNN as defined by https://www.danielpovey.com/files/2015_interspeech_multisplice.pdf
-        Affine transformation not applied globally to all frames but smaller windows with local context
-        batch_norm: True to include batch normalisation after the non linearity
-
-        Context size and dilation determine the frames selected
-        (although context size is not really defined in the traditional sense)
-        For example:
-            context size 5 and dilation 1 is equivalent to [-2,-1,0,1,2]
-            context size 3 and dilation 2 is equivalent to [-2, 0, 2]
-            context size 1 and dilation 1 is equivalent to [0]
-        '''
-        super(TDNN, self).__init__()
-        self.context_size = context_size
-        self.stride = stride
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.dilation = dilation
-        self.dropout_p = dropout_p
-        self.batch_norm = batch_norm
-
-        self.kernel = nn.Linear(input_dim*context_size, output_dim)
-        self.nonlinearity = nn.ReLU()
-        if self.batch_norm:
-            self.bn = nn.BatchNorm1d(output_dim)
-        if self.dropout_p:
-            self.drop = nn.Dropout(p=self.dropout_p)
-        self.save_hyperparameters()
-
-    def forward(self, x):
-        '''
-        input: size (batch, seq_len, input_features)
-        outpu: size (batch, new_seq_len, output_features)
-        '''
-        x=x.transpose(1,2)# by hsz [B,X,Y]
-        _, _, d = x.shape
-        assert (d == self.input_dim), 'Input dimension was wrong. Expected ({}), got ({})'.format(
-            self.input_dim, d)
-        
-       
-
-        x = x.unsqueeze(1)
-        
-        x=F.pad(x, pad = [0,0, self.context_size//2,self.context_size//2], mode='constant')
-        
-
-        # Unfold input into smaller temporal contexts
-        x = F.unfold(
-            x,
-            (self.context_size, self.input_dim),
-            stride=(1, self.input_dim),
-            dilation=(self.dilation, 1)
-        )
-
-        # N, output_dim*context_size, new_t = x.shape
-        x = x.transpose(1, 2)
-        x = self.kernel(x)
-        x = self.nonlinearity(x)
-
-        if self.dropout_p:
-            x = self.drop(x)
-
-        if self.batch_norm:
-            x = x.transpose(1, 2)
-            x = self.bn(x)
-            x = x.transpose(1, 2)
-
-        return x
-
-    def loss_fn(self, out, target):
-        
-        return nn.L1Loss()(out.squeeze(2), target)
-
-    def configure_optimizers(self):
-        
-        optimizer = torch.optim.AdamW(self.parameters(), lr=LR)
-        return optimizer
-
-    def training_step(self, batch, batch_idx):
-        x, y = batch["x"],batch["y"]
-
-        out = self(x)
-        loss = self.loss_fn(out, y)
-        self.log('train_loss', loss)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        x, y =batch["x"],batch["y"]
-
-        out = self(x)
-        loss = self.loss_fn(out, y)
-        self.log('val_loss', loss)
-        return loss
-
-
-
-#model 3 Simple Unet
+#model 1 Simple Unet
 
 class Block(nn.Module):
     def __init__(self, in_ch, out_ch):
@@ -404,7 +114,7 @@ class SimpleUNet(pl.LightningModule):
         return loss
 
 
-#model 4 complete UNet
+#model 2 complete UNet
 #https://github.com/milesial/Pytorch-UNet
 
 
@@ -480,7 +190,7 @@ class OutConv(nn.Module):
         return self.conv(x)
     
 class UNet(pl.LightningModule):
-    def __init__(self, n_channels=3, n_classes=2, bilinear=True):
+    def __init__(self, n_channels=5, n_classes=1, bilinear=True):
         super(UNet, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
@@ -499,7 +209,7 @@ class UNet(pl.LightningModule):
         self.outc = OutConv(64, n_classes)
 
     def forward(self, x):
-        x=x.transpose(1,3).transpose(2,3)#by hsz [B,3,Y,X]
+        #x=x.transpose(1,3).transpose(2,3)#by hsz [B,3+2,Y,X]
         x1 = self.inc(x)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
@@ -511,15 +221,16 @@ class UNet(pl.LightningModule):
         x = self.up4(x, x1)
         out = self.outc(x)
         #out=F.sigmoid(x.squeeze(1)) # hsz  if out is [B,1,Y,X]
-        #out =F.softmax(out, dim=1) #hsz if out is [B,2,Y,X]
+        out =F.softmax(out.squeeze(1), dim=1) 
         return out
 
     def loss_fn(self, out, target):
         #print(out,target,out.shape,target.shape)
         #Pytorch中, CrossEntropyLoss是包含了softmax的内容的，我们损失函数使用了CrossEntropyLoss, 那么网络的最后一层就不用softmax
-        loss=3*nn.CrossEntropyLoss()(out, target)  + dice_loss(F.softmax(out, dim=1).float(),
-                                       F.one_hot(target, 2).permute(0, 3, 1, 2).float(),
-                                       multiclass=True)+2*FocalLoss()(out, target)
+        #loss=1*nn.CrossEntropyLoss()(out, target)  + 0*dice_loss(F.softmax(out, dim=1).float(),F.one_hot(target, 2).permute(0, 3, 1, 2).float(),multiclass=True)+0*FocalLoss()(out, target)
+        
+        
+        loss=nn.NLLLoss()(torch.log(out), target)
         return loss
 
     def configure_optimizers(self):
@@ -544,18 +255,247 @@ class UNet(pl.LightningModule):
         return loss
 
     
-    #model 5 idea by prof.Zhao DP+cnn(?)
+    #model 3 idea by prof.Zhao segnet(?)
     
 
-'''class Down(nn.Module):
-    """Downscaling with maxpool then double conv"""
+class SegNet(pl.LightningModule):
 
-    def __init__(self, ):
-        super().__init__()
-        self.maxpool_conv = nn.Sequential(
-            nn.MaxPool2d(2),
-            DoubleConv(in_channels, out_channels)
-        )
+    def __init__(self, BN_momentum=0.5):
+        super(SegNet, self).__init__()
+
+		#SegNet Architecture
+		#Takes input of size in_chn = 3 (RGB images have 3 channels)
+		#Outputs size label_chn (N # of classes)
+
+		#ENCODING consists of 5 stages
+		#Stage 1, 2 has 2 layers of Convolution + Batch Normalization + Max Pool respectively
+		#Stage 3, 4, 5 has 3 layers of Convolution + Batch Normalization + Max Pool respectively
+
+		#General Max Pool 2D for ENCODING layers
+		#Pooling indices are stored for Upsampling in DECODING layers
+
+        self.in_chn = 5
+        self.out_chn = 1
+
+        self.MaxEn = nn.MaxPool2d(2, stride=2, return_indices=True) 
+
+        self.ConvEn11 = nn.Conv2d(self.in_chn, 64, kernel_size=3, padding=1)
+        self.BNEn11 = nn.BatchNorm2d(64, momentum=BN_momentum)
+        self.ConvEn12 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        self.BNEn12 = nn.BatchNorm2d(64, momentum=BN_momentum)
+        self.ConvEn21 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.BNEn21 = nn.BatchNorm2d(128, momentum=BN_momentum)
+        self.ConvEn22 = nn.Conv2d(128, 128, kernel_size=3, padding=1)
+        self.BNEn22 = nn.BatchNorm2d(128, momentum=BN_momentum)
+
+        self.ConvEn31 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
+        self.BNEn31 = nn.BatchNorm2d(256, momentum=BN_momentum)
+        self.ConvEn32 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
+        self.BNEn32 = nn.BatchNorm2d(256, momentum=BN_momentum)
+        self.ConvEn33 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
+        self.BNEn33 = nn.BatchNorm2d(256, momentum=BN_momentum)
+
+        self.ConvEn41 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
+        self.BNEn41 = nn.BatchNorm2d(512, momentum=BN_momentum)
+        self.ConvEn42 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.BNEn42 = nn.BatchNorm2d(512, momentum=BN_momentum)
+        self.ConvEn43 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.BNEn43 = nn.BatchNorm2d(512, momentum=BN_momentum)
+
+        self.ConvEn51 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.BNEn51 = nn.BatchNorm2d(512, momentum=BN_momentum)
+        self.ConvEn52 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.BNEn52 = nn.BatchNorm2d(512, momentum=BN_momentum)
+        self.ConvEn53 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.BNEn53 = nn.BatchNorm2d(512, momentum=BN_momentum)
+
+
+		#DECODING consists of 5 stages
+		#Each stage corresponds to their respective counterparts in ENCODING
+
+		#General Max Pool 2D/Upsampling for DECODING layers
+        self.MaxDe = nn.MaxUnpool2d(2, stride=2) 
+
+        self.ConvDe53 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.BNDe53 = nn.BatchNorm2d(512, momentum=BN_momentum)
+        self.ConvDe52 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.BNDe52 = nn.BatchNorm2d(512, momentum=BN_momentum)
+        self.ConvDe51 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.BNDe51 = nn.BatchNorm2d(512, momentum=BN_momentum)
+
+        self.ConvDe43 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.BNDe43 = nn.BatchNorm2d(512, momentum=BN_momentum)
+        self.ConvDe42 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.BNDe42 = nn.BatchNorm2d(512, momentum=BN_momentum)
+        self.ConvDe41 = nn.Conv2d(512, 256, kernel_size=3, padding=1)
+        self.BNDe41 = nn.BatchNorm2d(256, momentum=BN_momentum)
+        self.ConvDe33 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
+        self.BNDe33 = nn.BatchNorm2d(256, momentum=BN_momentum)
+        self.ConvDe32 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
+        self.BNDe32 = nn.BatchNorm2d(256, momentum=BN_momentum)
+        self.ConvDe31 = nn.Conv2d(256, 128, kernel_size=3, padding=1)
+        self.BNDe31 = nn.BatchNorm2d(128, momentum=BN_momentum)
+		
+        self.ConvDe22 = nn.Conv2d(128, 128, kernel_size=3, padding=1)
+		
+        self.BNDe22 = nn.BatchNorm2d(128, momentum=BN_momentum)
+		
+        self.ConvDe21 = nn.Conv2d(128, 64, kernel_size=3, padding=1)
+		
+        self.BNDe21 = nn.BatchNorm2d(64, momentum=BN_momentum)
+
+		
+        self.ConvDe12 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+		
+        self.BNDe12 = nn.BatchNorm2d(64, momentum=BN_momentum)
+        
+        self.ConvDe11 = nn.Conv2d(64, self.out_chn, kernel_size=3, padding=1)
+        self.BNDe11 = nn.BatchNorm2d(self.out_chn, momentum=BN_momentum)
 
     def forward(self, x):
-        return self.maxpool_conv(x)'''
+
+		#ENCODE LAYERS
+		#Stage 1
+        x = F.relu(self.BNEn11(self.ConvEn11(x))) 
+		
+        x = F.relu(self.BNEn12(self.ConvEn12(x))) 
+		
+        x, ind1 = self.MaxEn(x)
+		
+        size1 = x.size()
+
+		#Stage 2
+		
+        x = F.relu(self.BNEn21(self.ConvEn21(x))) 
+		
+        x = F.relu(self.BNEn22(self.ConvEn22(x))) 
+		
+        x, ind2 = self.MaxEn(x)
+		
+        size2 = x.size()
+
+		#Stage 3
+		
+        x = F.relu(self.BNEn31(self.ConvEn31(x))) 
+		
+        x = F.relu(self.BNEn32(self.ConvEn32(x))) 
+		
+        x = F.relu(self.BNEn33(self.ConvEn33(x))) 	
+		
+        x, ind3 = self.MaxEn(x)
+		
+        size3 = x.size()
+
+		#Stage 4
+		
+        x = F.relu(self.BNEn41(self.ConvEn41(x))) 
+		
+        x = F.relu(self.BNEn42(self.ConvEn42(x))) 
+		
+        x = F.relu(self.BNEn43(self.ConvEn43(x))) 	
+		
+        x, ind4 = self.MaxEn(x)
+		
+        size4 = x.size()
+
+		#Stage 5
+		
+        x = F.relu(self.BNEn51(self.ConvEn51(x))) 
+		
+        x = F.relu(self.BNEn52(self.ConvEn52(x))) 
+		
+        x = F.relu(self.BNEn53(self.ConvEn53(x))) 	
+		
+        x, ind5 = self.MaxEn(x)
+		
+        size5 = x.size()
+
+
+		#DECODE LAYERS
+		#Stage 5
+
+		
+        x = self.MaxDe(x, ind5, output_size=size4)
+
+		
+        x = F.relu(self.BNDe53(self.ConvDe53(x)))
+
+		
+        x = F.relu(self.BNDe52(self.ConvDe52(x)))
+
+		
+        x = F.relu(self.BNDe51(self.ConvDe51(x)))
+
+
+		#Stage 4
+		
+        x = self.MaxDe(x, ind4, output_size=size3)
+		
+        x = F.relu(self.BNDe43(self.ConvDe43(x)))
+		
+        x = F.relu(self.BNDe42(self.ConvDe42(x)))
+		
+        x = F.relu(self.BNDe41(self.ConvDe41(x)))
+
+
+		#Stage 3
+		
+        x = self.MaxDe(x, ind3, output_size=size2)
+		
+        x = F.relu(self.BNDe33(self.ConvDe33(x)))
+		
+        x = F.relu(self.BNDe32(self.ConvDe32(x)))
+		
+        x = F.relu(self.BNDe31(self.ConvDe31(x)))
+
+
+		#Stage 2
+		
+        x = self.MaxDe(x, ind2, output_size=size1)
+		
+        x = F.relu(self.BNDe22(self.ConvDe22(x)))
+		
+        x = F.relu(self.BNDe21(self.ConvDe21(x)))
+
+
+		#Stage 1
+		
+        x = self.MaxDe(x, ind1)
+		
+        x = F.relu(self.BNDe12(self.ConvDe12(x)))
+		
+        
+        x = self.ConvDe11(x)
+
+
+        x =F.softmax(x.squeeze(1), dim=1) 
+        return x
+    def loss_fn(self, out, target):
+        #print(out,target,out.shape,target.shape)
+        #Pytorch中, CrossEntropyLoss是包含了softmax的内容的，我们损失函数使用了CrossEntropyLoss, 那么网络的最后一层就不用softmax
+        #loss=1*nn.CrossEntropyLoss()(out, target)  + 0*dice_loss(F.softmax(out, dim=1).float(),F.one_hot(target, 2).permute(0, 3, 1, 2).float(),multiclass=True)+0*FocalLoss()(out, target)
+        
+        
+        loss=nn.NLLLoss()(torch.log(out), target)
+        return loss
+    def configure_optimizers(self):
+        
+        optimizer = torch.optim.AdamW(self.parameters(), lr=LR)
+        return optimizer
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch["x"],batch["y"]
+
+        out = self(x)
+        loss = self.loss_fn(out, y)
+        self.log('train_loss', loss)
+        return loss
+    def validation_step(self, batch, batch_idx):
+        x, y =batch["x"],batch["y"]
+
+        out = self(x)
+        loss = self.loss_fn(out, y)
+        self.log('val_loss', loss)
+        return loss
+
+    
