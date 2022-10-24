@@ -9,7 +9,7 @@ import torch
 h = 451
 w = 1023-1
 num = 10
-c = 0.01
+c = 0.1
 
 # the next function: calculate R^2, RMSE,
 def get_results():
@@ -30,7 +30,7 @@ def get_results():
         List = []
         List1 = np.zeros([1023])
         List2 = []
-        for i in range(1023): 
+        for i in range(1022): 
             List1[i] = M1[NUM,i]
             for j in range(451):  
                 if data[j,i] > 1:
@@ -39,31 +39,31 @@ def get_results():
         #print(NUM)
 
         sum = 0
-        for i in range(1023):
+        for i in range(1022):
             sum+=List2[i]**2
         #print(sum)
 
         y = 0
-        for i in range(1023):
+        for i in range(1022):
             y += List[i]
         y = y/1023
         #print(y)
 
         sum1 = 0
-        for i in range(1023):
+        for i in range(1022):
             sum1+=(List[i]-y)**2
         #print(sum1)
 
         R = 1-sum/sum1
         #print('R^2 =',R)
 
-        RMSE = 5000/451*math.pow((sum/1023),0.5)
+        RMSE = 5000/451*math.pow((sum/1022),0.5)
         #print('RMSE =',RMSE)
         
         mae = 0
-        for i in range(1023):
+        for i in range(1022):
             mae+=abs(List2[i])
-        MAE = mae/1023
+        MAE = mae/1022
 
         Datas[0,NUM] = R
         Datas[1,NUM] = RMSE

@@ -26,7 +26,7 @@ if __name__ == '__main__':
 
     
     ds = LightDataset()
-    trainer = pl.Trainer(accelerator='gpu', devices=-1, max_epochs=1000, callbacks=[checkpoint_callback])
+    trainer = pl.Trainer(accelerator='gpu', devices=-1, max_epochs=200, callbacks=[checkpoint_callback])
     trainer.fit(model=mod, datamodule=ds)
 
 

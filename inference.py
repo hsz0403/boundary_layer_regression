@@ -19,12 +19,13 @@ from data_processing import getline, get_results
 #NUM=55
 Y_LENGTH = 451
 X_LENGTH = 1023
+NOISE=10
 for i in range(79):
     NUM = i
 
     path=os.path.join('data_PBL/test_images',"test_"+str(NUM).zfill(3)+".jpg")
         
-    model_path="path/UNet/models-epoch=229-valid_loss=0.000.ckpt"
+    model_path="path/UNet/models-epoch=176-valid_loss=0.000.ckpt"
 
 
 
@@ -36,7 +37,11 @@ for i in range(79):
         img=cv2.imread(path)
         img_with_position=np.zeros((5,Y_LENGTH,X_LENGTH-1))
             
-        img_with_position[0:3,:,:]=np.array(img).transpose(2, 0, 1)[:,:,:1022]# [3,y,x]
+        
+        img_with_position[0:3,:Y_LENGTH-NOISE,:]=np.array(img).transpose(2, 0, 1)[:,:Y_LENGTH-NOISE,:1022]# [3,y,x]
+        for y in range(NOISE):
+            img_with_position[0:3,Y_LENGTH-NOISE+y,:]=img_with_position[0:3,Y_LENGTH-NOISE-1,:]
+    
         for y in range(Y_LENGTH):
             for x in range(X_LENGTH-1):
                 img_with_position[3,y,x]=y
@@ -49,35 +54,36 @@ for i in range(79):
         y_path="data_PBL/test_labels/test_label_"+str(NUM).zfill(3)+".png"
         y=cv2.imread(y_path)
         #print(y)
-        y_hat = model(torch.tensor(img_with_position, dtype=torch.float).unsqueeze(0))*(1)#[Y,X,3] to [B(1),Y,X,3]
+        y_hat = model(torch.tensor(img_with_position, dtype=torch.float).unsqueeze(0))#[Y,X,3] to [B(1),Y,X,3]
 
 ###  This part need to add      
-        image1 = y_hat.detach().squeeze(0)
-        '''print(image1,image1.shape)
-        c1,c2,h,w = image1.shape
+        image1 = y_hat.detach().squeeze(0)*(-1)
+        print(image1,image1.shape)
+        '''h,w = image1.shape
         image = torch.zeros([h,w])
         for i in range(h):
             for j in range(w):
-                a = image1[0,0,i,j]
-                b = image1[0,1,i,j]
+                #a = image1[0,0,i,j]
+                #b = image1[0,1,i,j]
                 #image[i,j] = abs(math.pow(math.e,b)-math.pow(math.e,a))/(math.pow(math.e,a)+math.pow(math.e,b))
-                image[i,j] = abs(b-a)/(a+b)
+                
                 #abs(math.pow(math.e,b)-math.pow(math.e,a))'''
-        #getline(image1,NUM)
+        getline(image1,NUM)
 ###
 
 
         y_hat=y_hat.detach().squeeze(0).numpy()        
+        new_y=np.zeros_like(y_hat)
         print(y_hat,y_hat.shape)
         print(y_hat[:,0].max())
         for i in range(450):
             for j in range(1022):
-                if( i>=np.argmax(y_hat[:,j])):
-                    y_hat[i][j]=255
+                if i>np.argmax(y_hat[:,j]):
+                    new_y[i,j]=255
                 else:
-                    y_hat[i][j]=0
-        print(y_hat)
-        cv2.imwrite("examples/test_"+str(NUM)+".png", y_hat)
+                    new_y[i,j]=0
+        print(new_y)
+        cv2.imwrite("examples/test_"+str(NUM)+".png", new_y)
 
         
         y=cv2.imread(y_path,cv2.IMREAD_GRAYSCALE)#(Y,X) 0 or 255
